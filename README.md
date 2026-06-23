@@ -145,15 +145,9 @@ Cada tecnologia, portanto, não está ali por modismo — está ali porque resol
 
 ---
 
-➡️ **Próximo passo:** Parte 3 — Definição formal da Arquitetura (bounded contexts, contratos de evento, tópicos do Kafka e desenho de infraestrutura).# 🌾 AgroFlow — Event Storming & Event Contracts
+## 🧠 Parte 3 - Event Storming
 
-> Arquitetura orientada a eventos para monitoramento inteligente de irrigação utilizando **Go**, **Python**, **C#**, **Kafka**, **PostgreSQL**, **React** e **Kubernetes**.
-
----
-
-# 🧠 Event Storming
-
-## 📌 Domain Events
+### 📌 Domain Events
 
 | Evento de Domínio | Producer |
 |-------------------|----------|
@@ -169,7 +163,7 @@ Cada tecnologia, portanto, não está ali por modismo — está ali porque resol
 
 ---
 
-# 📡 Kafka Topics
+### 📡 Kafka Topics
 
 | Topic | Events | Partition Key |
 |---------|---------|---------|
@@ -184,7 +178,7 @@ Cada tecnologia, portanto, não está ali por modismo — está ali porque resol
 
 ---
 
-# 🏗️ Bounded Contexts
+### 🏗️ Bounded Contexts
 
 | Contexto | Tipo Estratégico | Tecnologia | Responsabilidade |
 |-----------|-----------|-----------|-----------|
@@ -194,7 +188,7 @@ Cada tecnologia, portanto, não está ali por modismo — está ali porque resol
 
 ---
 
-# 🔄 Context Map
+### 🔄 Context Map
 
 ```mermaid
 flowchart LR
@@ -215,7 +209,7 @@ Cs -->|Zone Events| Py
 
 ---
 
-# 🏛️ Component Diagram
+### 🏛️ Component Diagram
 
 ```mermaid
 flowchart LR
@@ -253,11 +247,11 @@ React --> Cs
 
 ---
 
-# 📜 Event Contract Standard
+### 📜 Event Contract Standard
 
 Todos os eventos publicados no Kafka seguem o mesmo envelope.
 
-## ✨ Event Envelope
+#### ✨ Event Envelope
 
 ```json
 {
@@ -273,7 +267,7 @@ Todos os eventos publicados no Kafka seguem o mesmo envelope.
 
 ---
 
-## 🔍 Envelope Fields
+#### 🔍 Envelope Fields
 
 | Field | Purpose |
 |---------|---------|
@@ -286,23 +280,23 @@ Todos os eventos publicados no Kafka seguem o mesmo envelope.
 
 ---
 
-# 🚨 EVENT CONTRACTS (SOURCE OF TRUTH)
+## 🚨 EVENT CONTRACTS (SOURCE OF TRUTH)
 
 > ⚠️ Esta seção representa o contrato oficial de integração entre todos os microserviços.
 
 ---
 
-# 🐹 Telemetry Ingestion Events
+### 🐹 Telemetry Ingestion Events
 
-## SoilReadingRegistered
+### SoilReadingRegistered
 
-### Topic
+#### Topic
 
 ```text
 telemetry.readings.v1
 ```
 
-### Payload
+#### Payload
 
 ```json
 {
@@ -314,7 +308,7 @@ telemetry.readings.v1
 }
 ```
 
-### Notes
+#### Notes
 
 - `measuredAt` = instante da medição
 - `occurredAt` = instante da publicação
@@ -322,15 +316,15 @@ telemetry.readings.v1
 
 ---
 
-## WeatherForecastUpdated
+### WeatherForecastUpdated
 
-### Topic
+#### Topic
 
 ```text
 weather.forecasts.v1
 ```
 
-### Payload
+#### Payload
 
 ```json
 {
@@ -344,17 +338,17 @@ weather.forecasts.v1
 
 ---
 
-# 🐍 Irrigation Prediction Events
+### 🐍 Irrigation Prediction Events
 
-## IrrigationDecisionCalculated
+### IrrigationDecisionCalculated
 
-### Topic
+#### Topic
 
 ```text
 irrigation.decisions.v1
 ```
 
-### Payload
+#### Payload
 
 ```json
 {
@@ -369,14 +363,14 @@ irrigation.decisions.v1
 }
 ```
 
-### Decision Enum
+#### Decision Enum
 
 ```text
 START_IRRIGATION
 SKIP_IRRIGATION
 ```
 
-### Highlights
+#### Highlights
 
 ✅ Janela explícita de agregação
 
@@ -388,17 +382,17 @@ SKIP_IRRIGATION
 
 ---
 
-# 🔷 Farm Management Events
+### 🔷 Farm Management Events
 
-## IrrigationStarted
+### IrrigationStarted
 
-### Topic
+#### Topic
 
 ```text
 irrigation.events.v1
 ```
 
-### Payload
+#### Payload
 
 ```json
 {
@@ -410,15 +404,15 @@ irrigation.events.v1
 
 ---
 
-## IrrigationRejected
+### IrrigationRejected
 
-### Topic
+#### Topic
 
 ```text
 irrigation.events.v1
 ```
 
-### Payload
+#### Payload
 
 ```json
 {
@@ -428,7 +422,7 @@ irrigation.events.v1
 }
 ```
 
-### Reason Enum
+#### Reason Enum
 
 ```text
 ZONE_UNDER_MAINTENANCE
@@ -437,15 +431,15 @@ RESERVOIR_INSUFFICIENT_VOLUME
 
 ---
 
-## IrrigationFinished
+### IrrigationFinished
 
-### Topic
+#### Topic
 
 ```text
 irrigation.events.v1
 ```
 
-### Payload
+#### Payload
 
 ```json
 {
@@ -458,15 +452,15 @@ irrigation.events.v1
 
 ---
 
-## SlaBreached
+### SlaBreached
 
-### Topic
+#### Topic
 
 ```text
 alerts.sla.v1
 ```
 
-### Payload
+#### Payload
 
 ```json
 {
@@ -480,9 +474,9 @@ alerts.sla.v1
 
 ---
 
-## ZoneRegistered
+### ZoneRegistered
 
-### Topic
+#### Topic
 
 ```text
 zone.events.v1
@@ -571,4 +565,7 @@ Para este projeto educacional, este documento atua como o **Schema Registry ofic
 - Observability Ready (OpenTelemetry)
 
 ---
-⭐ **Os eventos e payloads descritos acima são a fonte única da verdade para comunicação entre os microserviços do AgroFlow.**
+⭐ **Os eventos e payloads descritos acima são a fonte única da verdade para comunicação entre os microserviços do DropSense.**
+
+---
+> Arquitetura orientada a eventos para monitoramento inteligente de irrigação utilizando **Go**, **Python**, **C#**, **Kafka**, **PostgreSQL**, **React** e **Kubernetes**.
