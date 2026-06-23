@@ -145,4 +145,430 @@ Cada tecnologia, portanto, não está ali por modismo — está ali porque resol
 
 ---
 
-➡️ **Próximo passo:** Parte 3 — Definição formal da Arquitetura (bounded contexts, contratos de evento, tópicos do Kafka e desenho de infraestrutura).
+➡️ **Próximo passo:** Parte 3 — Definição formal da Arquitetura (bounded contexts, contratos de evento, tópicos do Kafka e desenho de infraestrutura).# 🌾 AgroFlow — Event Storming & Event Contracts
+
+> Arquitetura orientada a eventos para monitoramento inteligente de irrigação utilizando **Go**, **Python**, **C#**, **Kafka**, **PostgreSQL**, **React** e **Kubernetes**.
+
+---
+
+# 🧠 Event Storming
+
+## 📌 Domain Events
+
+| Evento de Domínio | Producer |
+|-------------------|----------|
+| `SoilReadingRegistered` | 🐹 Go |
+| `WeatherForecastUpdated` | 🐹 Go |
+| `IrrigationDecisionCalculated` | 🐍 Python |
+| `IrrigationStarted` | 🔷 C# |
+| `IrrigationRejected` | 🔷 C# |
+| `IrrigationFinished` | 🔷 C# |
+| `SlaBreached` | 🔷 C# |
+| `ZoneRegistered` | 🔷 C# |
+| `ZoneSlaLimitsUpdated` | 🔷 C# |
+
+---
+
+# 📡 Kafka Topics
+
+| Topic | Events | Partition Key |
+|---------|---------|---------|
+| `telemetry.readings.v1` | `SoilReadingRegistered` | `sensorId` |
+| `weather.forecasts.v1` | `WeatherForecastUpdated` | `zoneId` |
+| `irrigation.decisions.v1` | `IrrigationDecisionCalculated` | `zoneId` |
+| `irrigation.events.v1` | `IrrigationStarted`, `IrrigationRejected`, `IrrigationFinished` | `zoneId` |
+| `zone.events.v1` | `ZoneRegistered`, `ZoneSlaLimitsUpdated` | `zoneId` |
+| `alerts.sla.v1` | `SlaBreached` | `zoneId` |
+
+> 💡 O sufixo `.v1` representa a versão do contrato do tópico e facilita evolução futura sem quebrar consumidores existentes.
+
+---
+
+# 🏗️ Bounded Contexts
+
+| Contexto | Tipo Estratégico | Tecnologia | Responsabilidade |
+|-----------|-----------|-----------|-----------|
+| **Telemetry Ingestion** | Generic Subdomain | 🐹 Go | Receber leituras e previsões meteorológicas |
+| **Irrigation Prediction** | Supporting Subdomain | 🐍 Python | Processar dados e calcular decisões de irrigação |
+| **Farm Management** | Core Domain | 🔷 C# | Gerenciar zonas, SLAs, reservatórios e ciclos |
+
+---
+
+# 🔄 Context Map
+
+```mermaid
+flowchart LR
+
+Weather["🌐 Weather API"]
+Go["🐹 Telemetry Ingestion"]
+Py["🐍 Irrigation Prediction"]
+Cs["🔷 Farm Management"]
+React["⚛️ Farmer Dashboard"]
+
+Weather -->|ACL| Go
+Go -->|Published Language| Py
+Py -->|Published Language| Cs
+Cs -->|REST API| React
+Cs -->|Zone Events| Go
+Cs -->|Zone Events| Py
+```
+
+---
+
+# 🏛️ Component Diagram
+
+```mermaid
+flowchart LR
+
+Sensors["🌱 Soil Sensors"]
+Weather["🌐 Weather API"]
+
+Go["🐹 Telemetry Ingestion"]
+GoDb["🗄️ PostgreSQL"]
+
+Kafka["📡 Kafka"]
+
+Py["🐍 Irrigation Prediction"]
+PyDb["🗄️ PostgreSQL"]
+
+Cs["🔷 Farm Management"]
+CsDb["🗄️ PostgreSQL"]
+
+React["⚛️ React Dashboard"]
+
+Sensors --> Go
+Weather --> Go
+
+Go --> Kafka
+Kafka --> Py
+Py --> Kafka
+Kafka --> Cs
+
+Go --> GoDb
+Py --> PyDb
+Cs --> CsDb
+
+React --> Cs
+```
+
+---
+
+# 📜 Event Contract Standard
+
+Todos os eventos publicados no Kafka seguem o mesmo envelope.
+
+## ✨ Event Envelope
+
+```json
+{
+  "eventId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "eventType": "IrrigationDecisionCalculated",
+  "eventVersion": 1,
+  "occurredAt": "2026-06-23T14:32:10Z",
+  "producer": "irrigation-prediction",
+  "correlationId": "b7e2a1d4-...",
+  "payload": {}
+}
+```
+
+---
+
+## 🔍 Envelope Fields
+
+| Field | Purpose |
+|---------|---------|
+| `eventId` | Idempotência e rastreabilidade |
+| `eventType` | Tipo do evento |
+| `eventVersion` | Versão do schema |
+| `occurredAt` | Timestamp de negócio |
+| `producer` | Serviço emissor |
+| `correlationId` | Correlação entre eventos |
+
+---
+
+# 🚨 EVENT CONTRACTS (SOURCE OF TRUTH)
+
+> ⚠️ Esta seção representa o contrato oficial de integração entre todos os microserviços.
+
+---
+
+# 🐹 Telemetry Ingestion Events
+
+## SoilReadingRegistered
+
+### Topic
+
+```text
+telemetry.readings.v1
+```
+
+### Payload
+
+```json
+{
+  "sensorId": "sensor-04812",
+  "zoneId": "zone-042",
+  "soilMoisturePercent": 38.5,
+  "soilTemperatureCelsius": 24.1,
+  "measuredAt": "2026-06-23T14:30:00Z"
+}
+```
+
+### Notes
+
+- `measuredAt` = instante da medição
+- `occurredAt` = instante da publicação
+- Leituras inválidas são descartadas antes da publicação
+
+---
+
+## WeatherForecastUpdated
+
+### Topic
+
+```text
+weather.forecasts.v1
+```
+
+### Payload
+
+```json
+{
+  "zoneId": "zone-042",
+  "rainProbabilityPercent": 80,
+  "forecastTemperatureCelsius": 29.5,
+  "forecastWindowHours": 12,
+  "source": "open-meteo"
+}
+```
+
+---
+
+# 🐍 Irrigation Prediction Events
+
+## IrrigationDecisionCalculated
+
+### Topic
+
+```text
+irrigation.decisions.v1
+```
+
+### Payload
+
+```json
+{
+  "zoneId": "zone-042",
+  "decision": "START_IRRIGATION",
+  "windowStart": "2026-06-23T14:25:00Z",
+  "windowEnd": "2026-06-23T14:30:00Z",
+  "averageSoilMoisturePercent": 31.2,
+  "rainProbabilityPercent": 80,
+  "confidenceScore": 0.74,
+  "modelVersion": "v1"
+}
+```
+
+### Decision Enum
+
+```text
+START_IRRIGATION
+SKIP_IRRIGATION
+```
+
+### Highlights
+
+✅ Janela explícita de agregação
+
+✅ Versionamento de modelo
+
+✅ Score de confiança
+
+✅ Evento explicável
+
+---
+
+# 🔷 Farm Management Events
+
+## IrrigationStarted
+
+### Topic
+
+```text
+irrigation.events.v1
+```
+
+### Payload
+
+```json
+{
+  "zoneId": "zone-042",
+  "cycleId": "9f8e7d6c-...",
+  "startedAt": "2026-06-23T14:31:05Z"
+}
+```
+
+---
+
+## IrrigationRejected
+
+### Topic
+
+```text
+irrigation.events.v1
+```
+
+### Payload
+
+```json
+{
+  "zoneId": "zone-042",
+  "reason": "RESERVOIR_INSUFFICIENT_VOLUME",
+  "rejectedAt": "2026-06-23T14:31:05Z"
+}
+```
+
+### Reason Enum
+
+```text
+ZONE_UNDER_MAINTENANCE
+RESERVOIR_INSUFFICIENT_VOLUME
+```
+
+---
+
+## IrrigationFinished
+
+### Topic
+
+```text
+irrigation.events.v1
+```
+
+### Payload
+
+```json
+{
+  "zoneId": "zone-042",
+  "cycleId": "9f8e7d6c-...",
+  "finishedAt": "2026-06-23T15:01:05Z",
+  "durationSeconds": 1800
+}
+```
+
+---
+
+## SlaBreached
+
+### Topic
+
+```text
+alerts.sla.v1
+```
+
+### Payload
+
+```json
+{
+  "zoneId": "zone-042",
+  "metric": "SOIL_MOISTURE",
+  "observedValue": 18.4,
+  "thresholdValue": 25.0,
+  "breachedSince": "2026-06-23T13:50:00Z"
+}
+```
+
+---
+
+## ZoneRegistered
+
+### Topic
+
+```text
+zone.events.v1
+```
+
+#### Payload
+
+```json
+{
+  "zoneId": "zone-042",
+  "name": "North Zone - Lot 7",
+  "hectares": 42.5,
+  "cropType": "COFFEE",
+  "soilType": "clay loam"
+}
+```
+
+---
+
+### ZoneSlaLimitsUpdated
+
+#### Topic
+
+```text
+zone.events.v1
+```
+
+#### Payload
+
+```json
+{
+  "zoneId": "zone-042",
+  "minSoilMoisturePercent": 25.0,
+  "maxSoilMoisturePercent": 60.0
+}
+```
+
+---
+
+### 🔗 Correlation Strategy
+
+#### Correlation Flow
+
+```text
+IrrigationDecisionCalculated
+          │
+          ▼
+IrrigationStarted
+          │
+          ▼
+IrrigationFinished
+```
+
+Todos compartilham o mesmo:
+
+```json
+{
+  "correlationId": "uuid"
+}
+```
+
+---
+
+### 📈 Future Evolution
+
+Em produção, estes contratos seriam registrados em um:
+
+- Confluent Schema Registry
+- Apache Avro
+- Protocol Buffers
+
+Para este projeto educacional, este documento atua como o **Schema Registry oficial do sistema**.
+
+---
+
+### 🎯 Architectural Principles
+
+- Event Driven Architecture
+- Domain Driven Design (DDD)
+- Database per Service
+- Event-Carried State Transfer
+- Published Language
+- Anti-Corruption Layer
+- Idempotent Consumers
+- Contract First Integration
+- Observability Ready (OpenTelemetry)
+
+---
+⭐ **Os eventos e payloads descritos acima são a fonte única da verdade para comunicação entre os microserviços do AgroFlow.**
