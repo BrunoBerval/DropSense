@@ -94,10 +94,10 @@ Cada sensor, a cada **30 segundos**, emite um payload JSON contendo:
 ```json
 {
   "sensorId": "string",
-  "zonaId": "string",
-  "nivelUmidadeSolo": "number (%)",
-  "temperaturaSolo": "number (°C)",
-  "timestamp": "datetime"
+  "zoneId": "string",
+  "soilMoisturePercent": "number (%)",
+  "soilTemperatureCelsius": "number (°C)",
+  "measuredAt": "datetime"
 }
 ```
 

@@ -1,0 +1,31 @@
+# --- .NET ---
+bin/
+obj/
+*.user
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# --- Go ---
+*.exe
+*.test
+/services/telemetry-ingestion-go/bin/
+
+# --- Node / React ---
+node_modules/
+dist/
+.vite/
+
+# --- Infra / local ---
+.env
+*.local
+
+# --- IDE ---
+.vs/
+.vscode/
+.idea/
+*.swp
