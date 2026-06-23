@@ -1,20 +1,24 @@
-version: "3.8"
-
-# AgroFlow - Infraestrutura local de desenvolvimento
+# DropSense - Infraestrutura local de desenvolvimento
 #
-# Filosofia deste arquivo: rodar o mínimo necessário com o mínimo de RAM,
+# Filosofia deste arquivo: rodar o minimo necessario com o minimo de RAM,
 # mantendo os conceitos arquiteturais corretos (ver docs/01-CONTEXTO-PROJETO.md
-# e a Parte 3 - Arquitetura no README de cada serviço).
+# e a Parte 3 - Arquitetura no README de cada servico).
 #
 # - Kafka em modo KRaft (sem Zookeeper), single-node, heap limitado.
-# - Postgres ÚNICO, com 3 databases lógicos (um por serviço) criados via
-#   script de init. Isso respeita "database per service" no nível de
-#   propriedade/acesso aos dados, sem multiplicar processos na máquina.
+# - Postgres UNICO, com 3 databases logicos (um por servico) criados via
+#   script de init.
+#
+# Nota sobre limites de memoria: usamos "mem_limit" direto no servico
+# (em vez de "deploy.resources.limits.memory") porque esse ultimo so e
+# garantido em modo Swarm - em "docker compose up" puro o comportamento
+# varia entre versoes da CLI. "mem_limit" e honrado de forma confiavel
+# em qualquer cenario.
 
 services:
   kafka:
     image: apache/kafka:3.7.0
-    container_name: agroflow-kafka
+    container_name: dropsense-kafka
+    mem_limit: 768m
     ports:
       - "9092:9092"
     environment:
@@ -30,46 +34,50 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_LOG_DIRS: /var/lib/kafka/data
-      # Conveniente em dev. Em produção os tópicos seriam criados
-      # explicitamente (com partições/retenção definidas) e essa flag iria pra false.
+      # Conveniente em dev. Em producao os topicos seriam criados
+      # explicitamente (com particoes/retencao definidas) e essa flag iria pra false.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
     volumes:
-      - agroflow-kafka-data:/var/lib/kafka/data
+      - dropsense-kafka-data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
       interval: 10s
       timeout: 10s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 768m
 
   postgres:
     image: postgres:16-alpine
-    container_name: agroflow-postgres
+    container_name: dropsense-postgres
+    mem_limit: 256m
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: agroflow
-      POSTGRES_PASSWORD: agroflow_dev_only
-      # Banco "default" exigido pela imagem; os bancos reais de cada
-      # serviço são criados pelo script abaixo.
+      POSTGRES_USER: dropsense
+      POSTGRES_PASSWORD: dropsense_dev_only
       POSTGRES_DB: postgres
     volumes:
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
-      - agroflow-postgres-data:/var/lib/postgresql/data
+      - dropsense-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agroflow"]
+      test: ["CMD-SHELL", "pg_isready -U dropsense"]
       interval: 10s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 256m
+
+  telemetry-ingestion:
+    build:
+      context: ../services/telemetry-ingestion-go
+      dockerfile: Dockerfile
+    container_name: dropsense-telemetry-ingestion
+    mem_limit: 64m
+    ports:
+      - "8080:8080"
+    # Sem depends_on do Kafka de proposito, por enquanto: o publisher
+    # ainda e o StdoutPublisher (stub). Quando o producer Kafka de
+    # verdade entrar, isso ganha "depends_on: kafka: condition:
+    # service_healthy".
 
 volumes:
-  agroflow-kafka-data:
-  agroflow-postgres-data:
+  dropsense-kafka-data:
+  dropsense-postgres-data:

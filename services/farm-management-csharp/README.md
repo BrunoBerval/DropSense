@@ -1,6 +1,6 @@
 # 🔷 farm-management (C# / .NET)
 
-**Core Domain** do AgroFlow. É aqui que mora a maior parte do esforço de DDD/TDD do projeto — ver `docs/01-CONTEXTO-PROJETO.md` na raiz do repositório para o contexto completo da arquitetura.
+**Core Domain** do DropSense. É aqui que mora a maior parte do esforço de DDD/TDD do projeto — ver `docs/01-CONTEXTO-PROJETO.md` na raiz do repositório para o contexto completo da arquitetura.
 
 ## Status atual
 
