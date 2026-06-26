@@ -1,7 +1,7 @@
 # --- Stage 1: build ---
 # Imagem com o toolchain completo do Go (~800MB), usada SO pra compilar.
 # Ela nao vai pra imagem final - e descartada depois do build.
-FROM golang:1.22-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
 

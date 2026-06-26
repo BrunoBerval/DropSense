@@ -13,12 +13,42 @@
 # garantido em modo Swarm - em "docker compose up" puro o comportamento
 # varia entre versoes da CLI. "mem_limit" e honrado de forma confiavel
 # em qualquer cenario.
+#
+# Nota sobre limites de CPU: pelo mesmo motivo acima, usamos "cpus"
+# direto no servico (equivalente em CPU ao "mem_limit"). Isso vira uma
+# cgroup CPU quota pro container - o Docker simplesmente pausa o
+# processo quando ele excede a fracao de nucleo configurada num dado
+# periodo (~100ms).
+#
+# Os valores abaixo assumem uma maquina de 4 nucleos logicos com 8GB de
+# RAM (perfil comum de notebook de estudo). Ajuste proporcionalmente
+# se o seu numero de nucleos for diferente:
+#   - Linux/WSL: rode `nproc` num terminal.
+#   - Docker Desktop (Mac/Windows): Settings > Resources > CPUs - esse
+#     numero (da VM do Docker Desktop), e nao o do hardware fisico, e o
+#     teto real que os containers competem entre si.
+# Orcamento com 4 nucleos: kafka=1.5 + postgres=0.5 + ingestion=1.0 =
+# 3.0 de 4 - sobra 1 nucleo de folga pro SO, pro proprio Docker Desktop
+# e pro seu editor/terminal. Nunca aloque 100% dos nucleos aos
+# containers: sem folga, a maquina toda fica lenta, nao so o Kafka.
+#
+# Sobre o Go especificamente: a partir do Go 1.25 (ago/2025), a runtime
+# passou a ler a CPU quota do cgroup e ajustar GOMAXPROCS automaticamente
+# (https://go.dev/blog/container-aware-gomaxprocs) - isso so vale se o
+# go.mod do servico declarar `go 1.25` ou mais novo. Com isso, o "cpus"
+# abaixo, por si so, ja basta: nao e mais necessario importar
+# go.uber.org/automaxprocs manualmente (eh literalmente a mesma logica
+# que a Uber escreveu, hoje embutida na stdlib). Se o go.mod ainda
+# declarar uma versao anterior a 1.25, ou se quiser fixar um valor
+# manualmente independente da deteccao automatica, descomente a linha
+# GOMAXPROCS no environment do servico telemetry-ingestion abaixo.
 
 services:
   kafka:
     image: apache/kafka:3.7.0
     container_name: dropsense-kafka
     mem_limit: 768m
+    cpus: 1.5
     ports:
       - "9092:9092"
     environment:
@@ -50,8 +80,9 @@ services:
     image: postgres:16-alpine
     container_name: dropsense-postgres
     mem_limit: 256m
+    cpus: 0.5
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: dropsense
       POSTGRES_PASSWORD: dropsense_dev_only
@@ -60,7 +91,7 @@ services:
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
       - dropsense-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dropsense"]
+      test: ["CMD-SHELL", "pg_isready -U dropsense -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -71,12 +102,29 @@ services:
       dockerfile: Dockerfile
     container_name: dropsense-telemetry-ingestion
     mem_limit: 64m
+    cpus: 1.0
     ports:
       - "8080:8080"
-    # Sem depends_on do Kafka de proposito, por enquanto: o publisher
-    # ainda e o StdoutPublisher (stub). Quando o producer Kafka de
-    # verdade entrar, isso ganha "depends_on: kafka: condition:
-    # service_healthy".
+    # GOMAXPROCS manual - so necessario se o go.mod deste servico
+    # declarar uma versao do Go anterior a 1.25 (sem deteccao
+    # automatica de cgroup), ou se quiser fixar o valor "na mao"
+    # independente do que o runtime detectar. Em Go 1.25+ a linha
+    # "cpus: 1.0" acima ja basta, isso aqui fica redundante (e o
+    # proprio runtime ignora a env var se ela vier vazia/ausente).
+    # environment:
+    #   - GOMAXPROCS=1
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_TOPIC=telemetry.readings.v1
+    # Agora SIM precisa esperar o Kafka: o publisher real
+    # (internal/kafka.Producer) substituiu o StdoutPublisher, então o
+    # serviço não tem mais como funcionar sem o broker de pé. O Kafka
+    # já tem healthcheck configurado acima, então usamos ele em vez de
+    # só "started" (que marcaria como pronto antes do broker aceitar
+    # conexões de fato).
+    depends_on:
+      kafka:
+        condition: service_healthy
 
 volumes:
   dropsense-kafka-data:

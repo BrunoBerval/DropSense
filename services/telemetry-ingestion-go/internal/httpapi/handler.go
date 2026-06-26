@@ -65,12 +65,14 @@ func (h *ReadingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		MeasuredAt:             measuredAt,
 	}
 
-	// Validação síncrona, de propósito: é checagem de CPU pura (sem
-	// I/O), então não compete com o motivo de existir do canal (que é
-	// proteger contra a parte LENTA - o publish no Kafka). "Falhar
-	// rápido na porta" também significa devolver 400 pro
-	// sensor/gateway na hora, em vez de aceitar (202) e descartar
-	// silenciosamente depois.
+
+	// Sync validation, on purpose: it's pure CPU check 
+	// (no I/O), so it doesn't compete with the channel's reason for existing 
+	// (which is to protect against the SLOW part - publishing to Kafka). 
+	// "Fail fast at the gate" also means returning 400 to the sensor/gateway immediately, 
+	// instead of accepting (202) and silently discarding later.
+
+
 	if err := reading.Validate(); err != nil {
 		log.Printf("[discarded] sensor=%s zone=%s reason=%v", reading.SensorID, reading.ZoneID, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
