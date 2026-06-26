@@ -115,7 +115,11 @@ services:
     #   - GOMAXPROCS=1
     environment:
       - KAFKA_BROKERS=kafka:9092
-      - KAFKA_TOPIC=telemetry.readings.v1
+      # WEATHER_POLL_INTERVAL: opcional, default é 30m (ver main.go).
+      # Só setar se quiser um intervalo diferente de consulta ao
+      # Open-Meteo - aceita qualquer valor que time.ParseDuration
+      # entenda (ex.: "10m", "1h").
+      # - WEATHER_POLL_INTERVAL=10m
     # Agora SIM precisa esperar o Kafka: o publisher real
     # (internal/kafka.Producer) substituiu o StdoutPublisher, então o
     # serviço não tem mais como funcionar sem o broker de pé. O Kafka

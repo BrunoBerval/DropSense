@@ -13,6 +13,13 @@ import (
 const (
 	SoilReadingEventType    = "SoilReadingRegistered"
 	SoilReadingEventVersion = 1
+	// SoilReadingTopic conforme a tabela de tópicos do README. Antes
+	// vinha de fora (KAFKA_TOPIC, env var) porque o Producer só
+	// publicava num tópico só; agora que ele publica em mais de um
+	// (telemetry.readings.v1 e weather.forecasts.v1), o tópico passou
+	// a ser parte do contrato de cada evento, não um detalhe de
+	// deploy.
+	SoilReadingTopic = "telemetry.readings.v1"
 )
 
 // SoilReadingPayload é o formato de FIO do evento SoilReadingRegistered -

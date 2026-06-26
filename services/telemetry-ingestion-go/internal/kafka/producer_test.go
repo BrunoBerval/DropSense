@@ -11,13 +11,13 @@ import (
 
 	"dropsense/telemetry-ingestion/internal/events"
 	"dropsense/telemetry-ingestion/internal/ingestion"
+	"dropsense/telemetry-ingestion/internal/weather"
 )
 
-// fakeProduceClient grava todo record que recebe, e deixa o teste decidir
-// se a "publicação" deve falhar ou não - mesmo padrão de fakeSubmitter
-// (handler_test.go) e recordingPublisher (pipeline_test.go) já usados no
-// resto do projeto: testar a lógica de montagem da mensagem sem depender
-// de um broker Kafka real.
+// fakeProduceClient grava todo record que recebe, e deixa o teste
+// decidir se a "publicação" deve falhar ou não - mesmo padrão de
+// fakeSubmitter (handler_test.go) e recordingPublisher
+// (pipeline_test.go) já usados no resto do projeto.
 type fakeProduceClient struct {
 	records []*kgo.Record
 	err     error
@@ -44,9 +44,19 @@ func validReading() ingestion.SoilReading {
 	}
 }
 
+func validForecast() weather.Forecast {
+	return weather.Forecast{
+		WindowHours:                12,
+		RainProbabilityPercent:     80,
+		ForecastTemperatureCelsius: 29.5,
+	}
+}
+
+// --- Publish (SoilReadingRegistered) ---
+
 func TestPublish_SendsToConfiguredTopic(t *testing.T) {
 	client := &fakeProduceClient{}
-	producer := &Producer{client: client, topic: "telemetry.readings.v1"}
+	producer := &Producer{client: client}
 
 	if err := producer.Publish(context.Background(), validReading()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -55,14 +65,14 @@ func TestPublish_SendsToConfiguredTopic(t *testing.T) {
 	if len(client.records) != 1 {
 		t.Fatalf("expected 1 record produced, got %d", len(client.records))
 	}
-	if got := client.records[0].Topic; got != "telemetry.readings.v1" {
-		t.Errorf("Topic = %q, want %q", got, "telemetry.readings.v1")
+	if got := client.records[0].Topic; got != events.SoilReadingTopic {
+		t.Errorf("Topic = %q, want %q", got, events.SoilReadingTopic)
 	}
 }
 
 func TestPublish_UsesSensorIDAsPartitionKey(t *testing.T) {
 	client := &fakeProduceClient{}
-	producer := &Producer{client: client, topic: "telemetry.readings.v1"}
+	producer := &Producer{client: client}
 
 	if err := producer.Publish(context.Background(), validReading()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -75,7 +85,7 @@ func TestPublish_UsesSensorIDAsPartitionKey(t *testing.T) {
 
 func TestPublish_WrapsPayloadInEnvelopeWithReadmeContractFields(t *testing.T) {
 	client := &fakeProduceClient{}
-	producer := &Producer{client: client, topic: "telemetry.readings.v1"}
+	producer := &Producer{client: client}
 
 	if err := producer.Publish(context.Background(), validReading()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -113,9 +123,82 @@ func TestPublish_WrapsPayloadInEnvelopeWithReadmeContractFields(t *testing.T) {
 
 func TestPublish_WhenBrokerReturnsError_PropagatesIt(t *testing.T) {
 	client := &fakeProduceClient{err: errors.New("broker unavailable")}
-	producer := &Producer{client: client, topic: "telemetry.readings.v1"}
+	producer := &Producer{client: client}
 
 	err := producer.Publish(context.Background(), validReading())
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+}
+
+// --- PublishWeatherForecast (WeatherForecastUpdated) ---
+
+func TestPublishWeatherForecast_SendsToWeatherTopic(t *testing.T) {
+	client := &fakeProduceClient{}
+	producer := &Producer{client: client}
+
+	if err := producer.PublishWeatherForecast(context.Background(), "zone-042", validForecast()); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(client.records) != 1 {
+		t.Fatalf("expected 1 record produced, got %d", len(client.records))
+	}
+	if got := client.records[0].Topic; got != events.WeatherForecastTopic {
+		t.Errorf("Topic = %q, want %q", got, events.WeatherForecastTopic)
+	}
+}
+
+func TestPublishWeatherForecast_UsesZoneIDAsPartitionKey(t *testing.T) {
+	client := &fakeProduceClient{}
+	producer := &Producer{client: client}
+
+	if err := producer.PublishWeatherForecast(context.Background(), "zone-042", validForecast()); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got := string(client.records[0].Key); got != "zone-042" {
+		t.Errorf("Key = %q, want %q", got, "zone-042")
+	}
+}
+
+func TestPublishWeatherForecast_WrapsPayloadInEnvelopeWithReadmeContractFields(t *testing.T) {
+	client := &fakeProduceClient{}
+	producer := &Producer{client: client}
+
+	if err := producer.PublishWeatherForecast(context.Background(), "zone-042", validForecast()); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var envelope events.Envelope
+	if err := json.Unmarshal(client.records[0].Value, &envelope); err != nil {
+		t.Fatalf("produced value is not a valid envelope: %v", err)
+	}
+
+	if envelope.EventType != events.WeatherForecastEventType {
+		t.Errorf("EventType = %q, want %q", envelope.EventType, events.WeatherForecastEventType)
+	}
+	if envelope.Producer != "telemetry-ingestion" {
+		t.Errorf("Producer = %q, want %q", envelope.Producer, "telemetry-ingestion")
+	}
+
+	var payload events.WeatherForecastPayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		t.Fatalf("envelope payload is not a valid WeatherForecastPayload: %v", err)
+	}
+	if payload.ZoneID != "zone-042" {
+		t.Errorf("payload.ZoneID = %q, want %q", payload.ZoneID, "zone-042")
+	}
+	if payload.Source != "open-meteo" {
+		t.Errorf("payload.Source = %q, want %q", payload.Source, "open-meteo")
+	}
+}
+
+func TestPublishWeatherForecast_WhenBrokerReturnsError_PropagatesIt(t *testing.T) {
+	client := &fakeProduceClient{err: errors.New("broker unavailable")}
+	producer := &Producer{client: client}
+
+	err := producer.PublishWeatherForecast(context.Background(), "zone-042", validForecast())
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
