@@ -80,7 +80,7 @@ services:
     image: postgres:16-alpine
     container_name: dropsense-postgres
     mem_limit: 256m
-    cpus: 0.5
+    cpus: 0.25
     ports:
       - "5433:5432"
     environment:
@@ -130,13 +130,14 @@ services:
       kafka:
         condition: service_healthy
 
-  # Orçamento de CPU revisado (4 núcleos): kafka=1.5 + postgres=0.5 +
-  # telemetry-ingestion=0.75 + irrigation-prediction=0.5 = 3.25 de 4 -
-  # ainda sobra ~0.75 nucleo de folga pro SO/editor/Chrome. Baixamos o
-  # telemetry-ingestion de 1.0 para 0.75 para abrir espaço: ele é,
-  # disparado, o serviço mais leve da stack (I/O-bound, sem
-  # processamento pesado), então é o que sobra mais margem pra cortar
-  # sem sentir diferença real.
+  # Orçamento de CPU revisado (4 núcleos, 5 serviços): kafka=1.5 +
+  # postgres=0.25 + telemetry-ingestion=0.75 + irrigation-prediction=0.5
+  # + farm-management=0.5 = 3.5 de 4 - sobra 0.5 núcleo de folga pro
+  # SO/editor/Chrome. Baixamos o postgres de 0.5 para 0.25 para abrir
+  # espaço: hoje ele está de pé, saudável, mas nenhum dos três
+  # serviços usa de fato (Go, Python e C# todos adiaram persistência
+  # deliberadamente - ver os comentários em cada um) - é, disparado, o
+  # contêiner mais ocioso da stack agora.
   irrigation-prediction:
     build:
       context: ../services/irrigation-prediction-py
@@ -154,6 +155,29 @@ services:
       # - DECISION_INTERVAL_SECONDS=60
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  farm-management:
+    build:
+      context: ../services/farm-management-csharp
+      dockerfile: Dockerfile
+    container_name: dropsense-farm-management
+    mem_limit: 256m
+    cpus: 0.5
+    ports:
+      - "8090:8080"
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      # KAFKA_CONSUMER_GROUP: opcional, default é "farm-management"
+      # (ver Program.cs).
+      # - KAFKA_CONSUMER_GROUP=farm-management
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/healthz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
