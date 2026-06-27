@@ -102,7 +102,7 @@ services:
       dockerfile: Dockerfile
     container_name: dropsense-telemetry-ingestion
     mem_limit: 64m
-    cpus: 1.0
+    cpus: 0.75
     ports:
       - "8080:8080"
     # GOMAXPROCS manual - so necessario se o go.mod deste servico
@@ -126,6 +126,37 @@ services:
     # já tem healthcheck configurado acima, então usamos ele em vez de
     # só "started" (que marcaria como pronto antes do broker aceitar
     # conexões de fato).
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # Orçamento de CPU revisado (4 núcleos): kafka=1.5 + postgres=0.5 +
+  # telemetry-ingestion=0.75 + irrigation-prediction=0.5 = 3.25 de 4 -
+  # ainda sobra ~0.75 nucleo de folga pro SO/editor/Chrome. Baixamos o
+  # telemetry-ingestion de 1.0 para 0.75 para abrir espaço: ele é,
+  # disparado, o serviço mais leve da stack (I/O-bound, sem
+  # processamento pesado), então é o que sobra mais margem pra cortar
+  # sem sentir diferença real.
+  irrigation-prediction:
+    build:
+      context: ../services/irrigation-prediction-py
+      dockerfile: Dockerfile
+    container_name: dropsense-irrigation-prediction
+    mem_limit: 192m
+    cpus: 0.5
+    ports:
+      - "8000:8000"
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      # WINDOW_SIZE_SECONDS e DECISION_INTERVAL_SECONDS: opcionais,
+      # defaults são 300 (5min) e 60 (1min) - ver app/config.py.
+      # - WINDOW_SIZE_SECONDS=300
+      # - DECISION_INTERVAL_SECONDS=60
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       kafka:
         condition: service_healthy
