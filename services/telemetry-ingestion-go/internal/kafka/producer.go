@@ -25,6 +25,7 @@ const producerName = "telemetry-ingestion"
 // um broker Kafka real de pé durante "go test".
 type produceClient interface {
 	ProduceSync(ctx context.Context, rs ...*kgo.Record) kgo.ProduceResults
+	Ping(ctx context.Context) error
 	Close()
 }
 
@@ -111,6 +112,20 @@ func (p *Producer) publishEnvelope(ctx context.Context, topic, key string, envel
 		return fmt.Errorf("kafka: failed to publish %s: %w", envelope.EventType, err)
 	}
 	return nil
+}
+
+// Ping confirma que o client conseguiu falar de verdade com pelo
+// menos um broker - diferente de NewProducer, que só monta o client
+// em memória, sem garantir nenhuma conexão real (o franz-go conecta
+// de fato só na primeira operação). Chamado uma vez, no startup do
+// main(), antes de aceitar qualquer requisição HTTP - é isso que
+// torna "/healthz responder 200" sinônimo de "pronto pra publicar",
+// não só "o processo HTTP subiu". Sem isso, o primeiro tick de uma
+// rajada grande (ex.: mock-sensors) pode bater bem na janela em que
+// o client ainda está descobrindo o broker, mesmo com o healthcheck
+// do Docker já tendo marcado o serviço como saudável.
+func (p *Producer) Ping(ctx context.Context) error {
+	return p.client.Ping(ctx)
 }
 
 // Close libera a conexão com o broker. Chamado uma vez, no shutdown

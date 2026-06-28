@@ -21,6 +21,7 @@ import (
 type fakeProduceClient struct {
 	records []*kgo.Record
 	err     error
+	pingErr error
 }
 
 func (f *fakeProduceClient) ProduceSync(_ context.Context, rs ...*kgo.Record) kgo.ProduceResults {
@@ -30,6 +31,10 @@ func (f *fakeProduceClient) ProduceSync(_ context.Context, rs ...*kgo.Record) kg
 		results[i] = kgo.ProduceResult{Record: r, Err: f.err}
 	}
 	return results
+}
+
+func (f *fakeProduceClient) Ping(_ context.Context) error {
+	return f.pingErr
 }
 
 func (f *fakeProduceClient) Close() {}
@@ -200,6 +205,26 @@ func TestPublishWeatherForecast_WhenBrokerReturnsError_PropagatesIt(t *testing.T
 
 	err := producer.PublishWeatherForecast(context.Background(), "zone-042", validForecast())
 	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+}
+
+// --- Ping ---
+
+func TestPing_Succeeds_WhenClientPingSucceeds(t *testing.T) {
+	client := &fakeProduceClient{}
+	producer := &Producer{client: client}
+
+	if err := producer.Ping(context.Background()); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestPing_PropagatesClientError(t *testing.T) {
+	client := &fakeProduceClient{pingErr: errors.New("broker unreachable")}
+	producer := &Producer{client: client}
+
+	if err := producer.Ping(context.Background()); err == nil {
 		t.Fatal("expected an error, got nil")
 	}
 }

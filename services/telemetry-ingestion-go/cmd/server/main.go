@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -18,8 +19,8 @@ import (
 )
 
 const (
-	pipelineWorkers    = 8   // goroutines consumindo o canal em paralelo
-	pipelineBufferSize = 500 // leituras que podem esperar antes de aplicar backpressure
+	pipelineWorkers    = 16   // goroutines consumindo o canal em paralelo
+	pipelineBufferSize = 1000 // leituras que podem esperar antes de aplicar backpressure
 
 	// Defaults pensados pra rodar dentro do docker-compose: "kafka" é
 	// o nome do serviço na mesma rede. KAFKA_BROKERS aceita uma lista
@@ -34,6 +35,18 @@ const (
 	// razoavelmente fresco" com não estourar o uso justo da API
 	// gratuita do Open-Meteo.
 	defaultWeatherPollInterval = 30 * time.Minute
+
+	// kgo.NewClient só monta o client em memória - a conexão real com
+	// o broker só acontece na primeira operação. Sem confirmar isso
+	// antes de aceitar requisições, "/healthz responder 200" significa
+	// só "o processo HTTP subiu", não "pronto pra publicar de
+	// verdade" - e o primeiro tick de uma rajada grande (mock-sensors)
+	// pode bater bem nessa janela fria. kafkaPingMaxRetries/
+	// kafkaPingRetryDelay existem só pra absorver uma demora
+	// transitória de poucos segundos - não um retry indefinido.
+	kafkaPingTimeout    = 5 * time.Second
+	kafkaPingMaxRetries = 10
+	kafkaPingRetryDelay = 500 * time.Millisecond
 )
 
 func main() {
@@ -53,6 +66,12 @@ func main() {
 		log.Fatalf("failed to connect to kafka: %v", err)
 	}
 	defer publisher.Close()
+
+	log.Println("confirming kafka connectivity before accepting any request...")
+	if err := waitForKafka(ctx, publisher); err != nil {
+		log.Fatalf("kafka never became reachable: %v", err)
+	}
+	log.Println("kafka confirmed reachable")
 
 	pipeline := ingestion.NewPipeline(publisher, pipelineWorkers, pipelineBufferSize)
 	pipeline.Start(ctx)
@@ -90,6 +109,32 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+// waitForKafka tenta confirmar a conexão real com o broker algumas
+// vezes, com um pequeno intervalo entre tentativas - absorve uma
+// demora curta e transitória (ex.: o broker ainda processando o
+// registro de um client novo) sem travar pra sempre se algo estiver
+// genuinamente errado.
+func waitForKafka(ctx context.Context, publisher *kafka.Producer) error {
+	var lastErr error
+	for attempt := 1; attempt <= kafkaPingMaxRetries; attempt++ {
+		pingCtx, cancel := context.WithTimeout(ctx, kafkaPingTimeout)
+		err := publisher.Ping(pingCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		log.Printf("kafka ping failed (attempt %d/%d): %v", attempt, kafkaPingMaxRetries, err)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(kafkaPingRetryDelay):
+		}
+	}
+	return fmt.Errorf("after %d attempts: %w", kafkaPingMaxRetries, lastErr)
 }
 
 func getEnv(key, fallback string) string {

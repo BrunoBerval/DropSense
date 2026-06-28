@@ -64,9 +64,17 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_LOG_DIRS: /var/lib/kafka/data
-      # Conveniente em dev. Em producao os topicos seriam criados
-      # explicitamente (com particoes/retencao definidas) e essa flag iria pra false.
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Antes era "true" (conveniente em dev, mas é exatamente o que
+      # causava a corrida "UNKNOWN_TOPIC_OR_PARTITION" na primeira
+      # mensagem publicada em qualquer tópico novo - o producer
+      # pergunta sobre o tópico, isso DISPARA a criação, mas a
+      # resposta dessa primeira pergunta ainda vem como "não existe").
+      # Agora os tópicos são criados explicitamente pelo serviço
+      # kafka-init, abaixo, antes de qualquer producer/consumer real
+      # subir - então essa flag pode (e deve) ir para false: qualquer
+      # publish num tópico que não foi criado de propósito agora é um
+      # erro real, não mais corrigido magicamente.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
     volumes:
       - dropsense-kafka-data:/var/lib/kafka/data
@@ -76,6 +84,42 @@ services:
       timeout: 10s
       retries: 5
 
+  # kafka-init roda uma vez, cria os 4 tópicos que os serviços
+  # realmente usam hoje, e termina (não fica residente - sem
+  # mem_limit/cpus, porque não compete por recurso de forma contínua
+  # como os outros serviços). --if-not-exists torna seguro rodar de
+  # novo em todo "docker compose up", sem dar erro se os tópicos já
+  # existirem (mesmo padrão do CREATE DATABASE no script SQL do
+  # Postgres).
+  #
+  # zone.events.v1 e alerts.sla.v1 (do README) ficam de fora de
+  # propósito: nenhum serviço publica ou consome eles ainda - criar
+  # tópico que nada usa seria antecipar escopo que não existe.
+  kafka-init:
+    image: apache/kafka:3.7.0
+    container_name: dropsense-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    # Não sobrescrevemos "entrypoint" de propósito - o entrypoint
+    # original da imagem (visível como "/__cacert_entrypoin..." no
+    # "docker compose ps") faz setup de certificados antes de exec'ar
+    # o comando; só trocamos o "command" (o CMD), que é o que esse
+    # entrypoint executa por último. set -e garante que, se algum
+    # kafka-topics.sh falhar de verdade (não por já existir - isso o
+    # --if-not-exists já trata), o container todo sai com erro, e os
+    # serviços que dependem de "service_completed_successfully" nunca
+    # sobem com tópico faltando sem ninguém notar.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry.readings.v1 --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic weather.forecasts.v1 --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic irrigation.decisions.v1 --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic irrigation.events.v1 --partitions 1 --replication-factor 1
+        echo "kafka-init: todos os topicos confirmados"
   postgres:
     image: postgres:16-alpine
     container_name: dropsense-postgres
@@ -120,24 +164,40 @@ services:
       # Open-Meteo - aceita qualquer valor que time.ParseDuration
       # entenda (ex.: "10m", "1h").
       # - WEATHER_POLL_INTERVAL=10m
+    # Faltava desde sempre: os outros serviços (postgres, irrigation-
+    # prediction, farm-management) já tinham healthcheck, mas este
+    # não - só o endpoint /healthz existia, sem nada batendo nele.
+    # Importa agora porque o mock-sensors precisa de
+    # "service_healthy" pra saber esperar o broker HTTP estar de pé
+    # de verdade, não só o container ter "iniciado". wget é o
+    # busybox que já vem no Alpine - sem instalar nada extra.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     # Agora SIM precisa esperar o Kafka: o publisher real
     # (internal/kafka.Producer) substituiu o StdoutPublisher, então o
     # serviço não tem mais como funcionar sem o broker de pé. O Kafka
     # já tem healthcheck configurado acima, então usamos ele em vez de
     # só "started" (que marcaria como pronto antes do broker aceitar
-    # conexões de fato).
+    # conexões de fato). kafka-init garante que os tópicos já existem
+    # antes deste serviço tentar publicar a primeira mensagem.
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
 
-  # Orçamento de CPU revisado (4 núcleos, 5 serviços): kafka=1.5 +
+  # Orçamento de CPU revisado (4 núcleos, 6 serviços): kafka=1.5 +
   # postgres=0.25 + telemetry-ingestion=0.75 + irrigation-prediction=0.5
-  # + farm-management=0.5 = 3.5 de 4 - sobra 0.5 núcleo de folga pro
-  # SO/editor/Chrome. Baixamos o postgres de 0.5 para 0.25 para abrir
-  # espaço: hoje ele está de pé, saudável, mas nenhum dos três
-  # serviços usa de fato (Go, Python e C# todos adiaram persistência
-  # deliberadamente - ver os comentários em cada um) - é, disparado, o
-  # contêiner mais ocioso da stack agora.
+  # + farm-management=0.5 + mock-sensors=0.25 = 3.75 de 4 - sobra só
+  # 0.25 núcleo de folga, ficando mais apertado a cada fase nova (era
+  # 0.5 antes deste serviço entrar). mock-sensors é diferente dos
+  # outros cinco nesse ponto: ele é uma ferramenta de TESTE, não uma
+  # peça permanente da arquitetura - quando não estiver testando,
+  # `docker compose stop mock-sensors` devolve esses 0.25 núcleos sem
+  # afetar o resto do sistema, que continua rodando normalmente.
   irrigation-prediction:
     build:
       context: ../services/irrigation-prediction-py
@@ -161,6 +221,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
 
   farm-management:
     build:
@@ -183,6 +245,46 @@ services:
       retries: 5
     depends_on:
       kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  # Lê data/sensor-readings.csv (gerado pelo script Python do Colab -
+  # ver gerar_sensores_dropsense.py) e dispara as leituras pro
+  # telemetry-ingestion de verdade, um tick por vez. O CSV nunca
+  # carrega timestamp: measuredAt é carimbado aqui, no instante real
+  # do envio (ver internal/sender/client.go).
+  #
+  # TICK_INTERVAL=2.5s é calibrado pro CSV padrão do gerador (2h
+  # simuladas, 30s entre leituras = 240 ticks): 240 × 2.5s = 600s =
+  # 10 minutos por passada completa - o "primeiro teste" combinado.
+  # Esse número não tem relação obrigatória com os 30s simulados
+  # dentro do arquivo, são dois relógios independentes - mude livre
+  # se gerar um CSV com outra duração.
+  mock-sensors:
+    build:
+      context: ../services/mock-sensors-go
+      dockerfile: Dockerfile
+    container_name: dropsense-mock-sensors
+    mem_limit: 64m
+    cpus: 0.25
+    volumes:
+      - ../data/sensor-readings.csv:/data/sensor-readings.csv:ro
+    environment:
+      - TELEMETRY_INGESTION_URL=http://telemetry-ingestion:8080
+      - CSV_PATH=/data/sensor-readings.csv
+      - TICK_INTERVAL=2.5s
+      - LOOP=true
+      # STARTUP_DELAY: dá um respiro antes do primeiro tick (que,
+      # por desenho, dispara imediato) - cobre o cenário de toda a
+      # stack subindo junto, mesmo com telemetry-ingestion já tendo
+      # confirmado o Kafka via Ping antes de aceitar requisições.
+      # 2m é o valor pedido pra este teste - reduza ou remova
+      # (default é 0s) depois que a inicialização a frio parar de
+      # ser uma variável em jogo.
+      - STARTUP_DELAY=2m
+    depends_on:
+      telemetry-ingestion:
         condition: service_healthy
 
 volumes:
